@@ -1,0 +1,14 @@
+[
+    {
+        "endpoint": "127.0.0.1:2379",
+        "username": "",
+        "password": "",
+        "desc": "local"
+    },
+    {
+        "endpoint": "127.0.0.1:12379",
+        "username": "",
+        "password": "",
+        "desc": "dev"
+    }
+]

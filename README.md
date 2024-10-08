@@ -4,11 +4,13 @@
 * Support etcd 2.x and etcd 3.x.
 * The server uses the etcd go client interface, and the server compiles with the etcd client package.
 * Based easyui framework to achieve(easyui license [easyui website](http://www.jeasyui.com)).
+* Multi-Environment ETCD Server Support.
 
 ## Usage
 * Run etcdkeeper.exe (windows version)
 * Run etcdkeeper.exe -auth (If enable etcd authentication)
 * [Download other platform releases](https://github.com/evildecay/etcdkeeper/releases).
+* copy conf.template.json to conf.json and modify the configuration.
 ```
 Usage of D:\Applications\etcdkeeper\etcdkeeper.exe:
   -auth

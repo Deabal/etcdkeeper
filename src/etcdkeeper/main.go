@@ -8,9 +8,6 @@ import (
 	_ "etcdkeeper/session/providers/memory"
 	"flag"
 	"fmt"
-	"github.com/coreos/etcd/pkg/transport"
-	"go.etcd.io/etcd/client/v2"
-	"go.etcd.io/etcd/client/v3"
 	"io"
 	"log"
 	"net/http"
@@ -21,6 +18,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coreos/etcd/pkg/transport"
+	"go.etcd.io/etcd/client/v2"
+	clientv3 "go.etcd.io/etcd/client/v3"
 )
 
 var (
@@ -45,6 +46,13 @@ type userInfo struct {
 	host   string
 	uname  string
 	passwd string
+}
+
+type Conf struct {
+	Endpoint string `json:"endpoint"`
+	Username     string `json:"username"`
+	Password string `json:"password"`
+	Desc     string `json:"desc"`
 }
 
 func main() {
@@ -82,11 +90,13 @@ func main() {
 	// dirctory mode
 	http.HandleFunc("/v3/getpath", middleware(nothing, getPath))
 
-	wd, err := os.Executable()
+	// load etcd config list
+	http.HandleFunc("/etcd/base_list", middleware(nothing, getETCDConfig))
+
+	rootPath, err := getRootPath()
 	if err != nil {
 		log.Fatal(err)
 	}
-	rootPath := filepath.Dir(wd)
 
 	// Session management
 	sessmgr, err = session.NewManager("memory", "_etcdkeeper_session", 86400)
@@ -96,7 +106,7 @@ func main() {
 	time.AfterFunc(86400*time.Second, func() {
 		sessmgr.GC()
 	})
-	//log.Println(http.Dir(rootPath + "/assets"))
+	log.Println(http.Dir(rootPath + "/assets"))
 
 	http.Handle("/", http.FileServer(http.Dir(rootPath+"/assets"))) // view static directory
 
@@ -109,6 +119,14 @@ func main() {
 
 func nothing(_ http.ResponseWriter, _ *http.Request) {
 	// Nothing
+}
+
+func getRootPath() (string,error) {
+	wd, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Dir(wd), nil
 }
 
 //func v2request(w http.ResponseWriter, r *http.Request){
@@ -635,7 +653,7 @@ func connect(w http.ResponseWriter, r *http.Request) {
 	} else {
 		rootUsers[host] = uinfo
 	}
-	log.Println(r.Method, "v3", "connect success.")
+	log.Println(r.Method, "v3", "connect success.", host)
 	info := getInfo(host)
 	b, _ := json.Marshal(map[string]interface{}{"status": "running", "info": info})
 	io.WriteString(w, string(b))
@@ -1011,12 +1029,35 @@ func newClient(uinfo *userInfo) (*clientv3.Client, error) {
 		conf.Password = uinfo.passwd
 	}
 
+	errChan := make(chan error, 1)
+	cliChan := make(chan *clientv3.Client, 1)
+
 	var c *clientv3.Client
-	c, err = clientv3.New(conf)
-	if err != nil {
+	go func() {
+		c, err = clientv3.New(conf)
+		if err != nil {
+			errChan <- err
+			return
+		}
+		statusRes, err := c.Status(context.Background(), endpoints[0])
+		if err != nil {
+			errChan <- err
+			return
+		} else if statusRes == nil {
+			errChan <- fmt.Errorf("status response is nil")
+			return
+		}
+			cliChan <- c
+	}()
+
+	select{
+	case err = <-errChan:
 		return nil, err
+	case c = <-cliChan:
+		return c, nil
+	case <-time.After(time.Second * time.Duration(*connectTimeout)):
+		return nil, fmt.Errorf("etcd server connect timeout")
 	}
-	return c, nil
 }
 
 func getPermissionPrefix(host, uname, key string) ([][]string, error) {
@@ -1118,4 +1159,30 @@ func getInfo(host string) map[string]string {
 
 func size(num int, unit int) (n, rem int) {
 	return num / unit, num - (num/unit)*unit
+}
+
+func getETCDConfig(w http.ResponseWriter, _ *http.Request) {
+	rootPath, err := getRootPath()
+	if err != nil {
+		io.WriteString(w, err.Error())
+		return
+	}
+	// load local json file
+	b, err := os.ReadFile(rootPath + "/conf.json")
+	if err != nil {
+		io.WriteString(w, err.Error())
+		return
+	}
+	confList := make([]Conf, 0)
+	err = json.Unmarshal(b, &confList)
+	if err != nil {
+		io.WriteString(w, err.Error())
+		return
+	}
+	s, err := json.Marshal(confList)
+	if err != nil {
+		io.WriteString(w, err.Error())
+		return
+	}
+	io.WriteString(w, string(s))
 }
